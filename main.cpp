@@ -214,6 +214,7 @@ public:
       queue.pop();
       auto next_token_set = GetNextTokens(closure);
       for (const auto &token : next_token_set) {
+        if (token->type_ == Token::Type::BLANK) continue;
         auto next_closure_pair = GetNextClosureFor(token, closure);
         const auto &next_closure = next_closure_pair.second;
         action_[closure][token] = next_closure;
@@ -227,16 +228,23 @@ public:
         }
       }
 
-      for (const auto& kernel_item : closure->kernel_items_) {
-        if (kernel_item.matched_ == kernel_item.production_->body_.size()) {
+      for (const auto &kernel_item : closure->kernel_items_) {
+        if (kernel_item.matched_ == kernel_item.production_->body_.size() ||
+            (kernel_item.production_->body_.size() == 1 &&
+             kernel_item.production_->body_.front()->type_ ==
+                 Token::Type::BLANK)) {
           for (const auto& token : kernel_item.end_with_) {
+            if (token->type_ == Token::Type::BLANK) continue;
             if (reduce_[closure].find(token) != reduce_[closure].end()) {
-              throw std::invalid_argument("Reduce confliction found.");
+              throw std::invalid_argument("Reduce-Reduce confliction found.");
+            }
+            if (action_[closure].find(token) != action_[closure].end()) {
+              throw std::invalid_argument("Shift-Reduce confliction found.");
             }
             reduce_[closure][token] = kernel_item.production_;
           }
-        } 
-      }      
+        }
+      }
     }
   }
   
