@@ -62,7 +62,27 @@ struct Grammar {
   TokenPtr blank_;
   void BuildProductionsOf() {
     for (const auto &production : productions_) {
+      if (production->body_.empty()) {
+        std::stringstream ss;
+        ss << "Production with head:" << production->head_ << " has empty body"; 
+        throw std::invalid_argument(ss.str());
+      }
+      for (const auto& token : production->body_) {
+        if (token->type_ == Token::Type::BLANK && production->body_.size() != 1) {
+          std::vector<TokenPtr> new_production_body;
+          for (const auto& token : production->body_) {
+            if (token->type_ == Token::Type::BLANK) {
+              continue;
+            }
+            new_production_body.push_back(token);
+          }
+          production->body_ = new_production_body;
+        }
+      }
       const auto &body = production->body_;
+      if (production->head_->type_ != Token::Type::Nonterminator) {
+        throw std::invalid_argument("Production head is not nonterminator");
+      }
       productions_of_[production->head_->name_].push_back(production);
     }
   }
@@ -227,7 +247,7 @@ public:
           queue.push(next_closure);
         }
       }
-
+      
       for (const auto &kernel_item : closure->kernel_items_) {
         if (kernel_item.matched_ == kernel_item.production_->body_.size() ||
             (kernel_item.production_->body_.size() == 1 &&
@@ -335,6 +355,18 @@ private:
         return {true, closure};
       }
     }
+    
+    size_t blank_production_count = 0; 
+    for (const auto& kernel_item : kernel_items) {
+      if (kernel_item.production_->body_.front()->type_ == Token::Type::BLANK) {
+        blank_production_count++;          
+        if (blank_production_count > 1) {
+          throw std::invalid_argument("Found two blank production in one kernel");
+        }
+      }
+    }
+
+
     auto new_closure = std::make_shared<Closure>();
     new_closure->kernel_items_ = std::move(kernel_items);
     std::queue<TokenPtr> queue;
