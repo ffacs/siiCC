@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <iomanip> 
 
 struct Token {
   enum class Type : uint32_t {
@@ -16,7 +17,11 @@ struct Token {
     BLANK = 2,
     END = 3
   };
-  Token(Type type, const std::string &name) : type_(type), name_(name) {}
+  uint32_t id_;
+  Token(Type type, const std::string &name) : type_(type), name_(name) {
+    static uint32_t id = 0;
+    id_ = id++; 
+  }
   Type type_;
   std::string name_;
   std::string to_string() const { return name_; }
@@ -29,7 +34,11 @@ typedef std::vector<TokenPtr> TokenPtrVec;
 struct Production {
   TokenPtr head_;
   TokenPtrVec body_;
-  Production(TokenPtr head, TokenPtrVec body) : head_(head), body_(body) {}
+  uint32_t id_;
+  Production(TokenPtr head, TokenPtrVec body) : head_(head), body_(body) {
+    static uint32_t id = 0;
+    id_ = id++;
+  }
   std::string to_string() const {
     std::stringstream ss;
     ss << head_->to_string() << " -> ";
@@ -132,6 +141,12 @@ typedef std::vector<NormalItem> NormalItemVec;
 struct Closure {
   KernelItemVec kernel_items_;
   NormalItemVec normal_items_;
+  uint32_t id_;
+
+  Closure() {
+    static uint32_t id = 0;
+    id_ = id++;
+  }
 
   bool operator==(const KernelItemVec &other) const {
     if (kernel_items_.size() != other.size())
@@ -169,7 +184,6 @@ struct Closure {
 };
 
 typedef std::shared_ptr<Closure> ClosurePtr;
-
 class ParserGenerator {
 public:
   ParserGenerator(const Grammar &grammar) {
@@ -202,7 +216,7 @@ public:
       for (const auto &token : next_token_set) {
         auto next_closure_pair = GetNextClosureFor(token, closure);
         const auto &next_closure = next_closure_pair.second;
-        edges_[closure][token] = next_closure;
+        action_[closure][token] = next_closure;
         std::cout << "------------------------\n";
         std::cout << closure->to_string(grammar_.productions_of_) << " >> "
                   << token->to_string() << " >> \n"
@@ -212,22 +226,70 @@ public:
           queue.push(next_closure);
         }
       }
+
+      for (const auto& kernel_item : closure->kernel_items_) {
+        if (kernel_item.matched_ == kernel_item.production_->body_.size()) {
+          for (const auto& token : kernel_item.end_with_) {
+            if (reduce_[closure].find(token) != reduce_[closure].end()) {
+              throw std::invalid_argument("Reduce confliction found.");
+            }
+            reduce_[closure][token] = kernel_item.production_;
+          }
+        } 
+      }      
+    }
+  }
+  
+  void PrintLALRTable() {
+    std::cout << std::setw(10) << "name";
+    for (const auto& terminator : grammar_.terminators_) {
+      std::cout << std::setw(10) << terminator->to_string();
+    }
+    for (const auto& nonterminator : grammar_.nonterminators_) {
+      std::cout << std::setw(10) << nonterminator->to_string();
+    }
+    std::cout << std::endl;
+    for (const auto& closure : closures_) {
+      std::cout << std::setw(10) << std::to_string(closure->id_) + "|";
+      for (const auto& terminator : grammar_.terminators_) {
+        if (action_[closure].find(terminator) != action_[closure].end()) {
+          std::cout << std::setw(10) << std::string("s") + std::to_string(action_[closure][terminator]->id_) + "|";
+        } else if (reduce_[closure].find(terminator) != reduce_[closure].end()){
+          std::cout << std::setw(10) << std::string("r") + std::to_string(reduce_[closure][terminator]->id_) + "|";
+        } else {
+          std::cout << std::setw(10) << "|";
+        } 
+      }
+      for (const auto& nonterminator : grammar_.nonterminators_) {
+        if (action_[closure].find(nonterminator) != action_[closure].end()) {
+          std::cout << std::setw(10) << std::to_string(action_[closure][nonterminator]->id_) + "|";
+        } else {
+          std::cout << std::setw(10) << "|";
+        }         
+      }
+      std::cout << "\n";
     }
   }
 
 private:
-  TokenPtrSet GetNextTokens(const ClosurePtr &closure) {
-    TokenPtrSet result;
+  TokenPtrVec GetNextTokens(const ClosurePtr &closure) {
+    TokenPtrVec result;
     for (const auto &kernel_item : closure->kernel_items_) {
       if (kernel_item.matched_ != kernel_item.production_->body_.size()) {
-        result.insert(kernel_item.production_->body_[kernel_item.matched_]);
+        const auto& token = kernel_item.production_->body_[kernel_item.matched_];
+        if (std::find(result.begin(), result.end(), token) == result.end()) {
+          result.push_back(token);
+        }
       }
     }
     for (const auto &normal_item : closure->normal_items_) {
       for (const auto &production :
            grammar_.productions_of_[normal_item.head_->name_]) {
         if (!production->body_.empty()) {
-          result.insert(production->body_.front());
+          const auto& token = production->body_.front();
+          if (std::find(result.begin(), result.end(), token) == result.end()) {
+            result.push_back(token);
+          }
         }
       }
     }
@@ -380,7 +442,8 @@ private:
   Grammar grammar_;
   std::map<TokenPtr, TokenPtrSet> follow_of_;
   std::map<TokenPtr, TokenPtrSet> first_of_;
-  std::map<ClosurePtr, std::map<TokenPtr, ClosurePtr>> edges_;
+  std::map<ClosurePtr, std::map<TokenPtr, ClosurePtr>> action_;
+  std::map<ClosurePtr, std::map<TokenPtr, ProductionPtr>> reduce_;
 };
 
 int main() {
@@ -388,40 +451,37 @@ int main() {
 
   auto b_blank = std::make_shared<Token>(Token::Type::BLANK, "blank");
 
-  auto t_number = std::make_shared<Token>(Token::Type::Terminator, "number");
-  auto t_puls = std::make_shared<Token>(Token::Type::Terminator, "+");
-  auto t_comma = std::make_shared<Token>(Token::Type::Terminator, ",");
+  auto t_star = std::make_shared<Token>(Token::Type::Terminator, "*");
+  auto t_id = std::make_shared<Token>(Token::Type::Terminator, "id");
+  auto t_equal = std::make_shared<Token>(Token::Type::Terminator, "=");
 
-  auto n_primary =
-      std::make_shared<Token>(Token::Type::Nonterminator, "primary");
-  auto n_expression =
-      std::make_shared<Token>(Token::Type::Nonterminator, "expr");
-  auto n_start = std::make_shared<Token>(Token::Type::Nonterminator, "start");
+  auto n_S =
+      std::make_shared<Token>(Token::Type::Nonterminator, "S");
+  auto n_L =
+      std::make_shared<Token>(Token::Type::Nonterminator, "L");
+  auto n_R = std::make_shared<Token>(Token::Type::Nonterminator, "R");
 
   auto e_ed = std::make_shared<Token>(Token::Type::END, "$");
 
-  simple.start_ = n_start;
+  simple.start_ = n_S;
   simple.end_ = e_ed;
 
-  simple.nonterminators_ = {n_primary, n_expression, n_start};
-  simple.terminators_ = {t_comma, t_number, t_puls, e_ed};
+  simple.nonterminators_ = {n_S, n_L, n_R};
+  simple.terminators_ = {t_star, t_id, t_equal, e_ed};
 
   simple.blank_ = b_blank;
 
   ProductionPtrVec productions = {
-      std::make_shared<Production>(
-          n_start, TokenPtrVec{n_expression, t_comma,
-                               n_start}), // start -> expr,start | expr
-      std::make_shared<Production>(n_start, TokenPtrVec{n_expression}),
-      std::make_shared<Production>(
-          n_expression,
-          TokenPtrVec{n_primary, t_puls,
-                      n_primary}), // expr -> primary + primary
-      std::make_shared<Production>(n_primary, TokenPtrVec{t_number}),
+      std::make_shared<Production>(n_S, TokenPtrVec{n_L, t_equal, n_R}),
+      std::make_shared<Production>(n_S, TokenPtrVec{n_R}),
+      std::make_shared<Production>(n_L, TokenPtrVec{t_star, n_R}),
+      std::make_shared<Production>(n_L, TokenPtrVec{t_id}),
+      std::make_shared<Production>(n_R, TokenPtrVec{n_L}),
   };
 
   simple.productions_ = productions;
 
   ParserGenerator generator(simple);
   generator.GenerateLALRTable();
+  generator.PrintLALRTable();
 }
