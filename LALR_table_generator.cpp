@@ -74,22 +74,38 @@ std::optional<size_t> Closure::GetNormalItem(TokenPtr token) {
 }
 
 LALRTableGenerator::LALRTableGenerator(const Grammar &grammar) {
-  Grammar new_grammer = grammar;
+  GrammarPtr new_grammer = std::make_shared<Grammar>();
+  *new_grammer = grammar;
   auto new_start =
-      std::make_shared<Token>(Token::Type::Nonterminator, "LALR_START");
-  new_grammer.start_ = new_start;
+      NewNonTerminator(Token::Type::Nonterminator, "GRAMMAR_START");
+
+  new_grammer->start_ = new_start;
+  new_grammer->nonterminators_.insert(new_start);
   auto new_production =
       std::make_shared<Production>(new_start, TokenPtrVec{grammar.start_});
-  new_grammer.productions_.insert(new_grammer.productions_.begin(),
+  new_grammer->productions_.insert(new_grammer->productions_.begin(),
                                   new_production);
-  new_grammer.BuildProductionsOf();
+  new_grammer->BuildProductionsOf();
   grammar_ = new_grammer;
+  
+  uint32_t idx = 0;
+  for (auto& production : grammar_->productions_) {
+    production->id_ = ++idx;
+  }
+  idx = 0;
+  for (auto& terminator : grammar_->terminators_) {
+    terminator->id_ = ++idx;
+  }
+  idx = 0;
+  for (auto& nonterminator : grammar_->nonterminators_) {
+    nonterminator->id_ = ++idx;
+  }
 }
 
 void LALRTableGenerator::GenerateLALRTable() {
   KernelItem begin_closure_kernel_item(
-      grammar_.productions_of_[grammar_.start_->name_][0], 0);
-  begin_closure_kernel_item.end_with_ = {grammar_.end_};
+      grammar_->productions_of_[grammar_->start_->name_][0], 0);
+  begin_closure_kernel_item.end_with_ = {grammar_->end_};
 
   auto begin_closure_pair = GetClosure({begin_closure_kernel_item});
   auto &begin_closure = begin_closure_pair.second;
@@ -106,11 +122,11 @@ void LALRTableGenerator::GenerateLALRTable() {
       auto next_closure_pair = GetNextClosureFor(token, closure);
       const auto &next_closure = next_closure_pair.second;
       action_[closure][token] = next_closure;
-      std::cout << "------------------------\n";
-      std::cout << closure->to_string(grammar_.productions_of_) << " >> "
-                << token->to_string() << " >> \n"
-                << next_closure->to_string(grammar_.productions_of_);
-      std::cout << "------------------------\n";
+//       std::cout << "------------------------\n";
+//       std::cout << closure->to_string(grammar_->productions_of_) << " >> "
+//                 << token->to_string() << " >> \n"
+//                 << next_closure->to_string(grammar_->productions_of_);
+//       std::cout << "------------------------\n";
       if (!next_closure_pair.first) {
         queue.push(next_closure);
       }
@@ -139,16 +155,16 @@ void LALRTableGenerator::GenerateLALRTable() {
 
 void LALRTableGenerator::PrintLALRTable() {
   std::cout << std::setw(10) << "name";
-  for (const auto &terminator : grammar_.terminators_) {
+  for (const auto &terminator : grammar_->terminators_) {
     std::cout << std::setw(10) << terminator->to_string();
   }
-  for (const auto &nonterminator : grammar_.nonterminators_) {
+  for (const auto &nonterminator : grammar_->nonterminators_) {
     std::cout << std::setw(10) << nonterminator->to_string();
   }
   std::cout << std::endl;
   for (const auto &closure : closures_) {
     std::cout << std::setw(10) << std::to_string(closure->id_) + "|";
-    for (const auto &terminator : grammar_.terminators_) {
+    for (const auto &terminator : grammar_->terminators_) {
       if (action_[closure].find(terminator) != action_[closure].end()) {
         std::cout << std::setw(10)
                   << std::string("s") +
@@ -163,7 +179,7 @@ void LALRTableGenerator::PrintLALRTable() {
         std::cout << std::setw(10) << "|";
       }
     }
-    for (const auto &nonterminator : grammar_.nonterminators_) {
+    for (const auto &nonterminator : grammar_->nonterminators_) {
       if (action_[closure].find(nonterminator) != action_[closure].end()) {
         std::cout << std::setw(10)
                   << std::to_string(action_[closure][nonterminator]->id_) + "|";
@@ -196,6 +212,7 @@ LALRTableGenerator::GetClosure(KernelItemVec &&kernel_items) {
 
   auto new_closure = std::make_shared<Closure>();
   new_closure->kernel_items_ = std::move(kernel_items);
+  new_closure->id_ = closures_.size() + 1;
   std::queue<TokenPtr> queue;
   for (const auto &kernel_item : new_closure->kernel_items_) {
     if (kernel_item.matched_ != kernel_item.production_->body_.size()) {
@@ -215,7 +232,7 @@ LALRTableGenerator::GetClosure(KernelItemVec &&kernel_items) {
   while (!queue.empty()) {
     auto token = queue.front();
     queue.pop();
-    for (const auto &production : grammar_.productions_of_[token->name_]) {
+    for (const auto &production : grammar_->productions_of_[token->name_]) {
       if (production->body_.empty())
         continue;
       const auto &new_token = production->body_.front();
@@ -259,7 +276,7 @@ TokenPtrVec LALRTableGenerator::GetNextTokens(const ClosurePtr &closure) {
   }
   for (const auto &normal_item : closure->normal_items_) {
     for (const auto &production :
-         grammar_.productions_of_[normal_item.head_->name_]) {
+         grammar_->productions_of_[normal_item.head_->name_]) {
       if (!production->body_.empty()) {
         const auto &token = production->body_.front();
         if (std::find(result.begin(), result.end(), token) == result.end()) {
@@ -285,7 +302,7 @@ LALRTableGenerator::GetNextClosureFor(const TokenPtr &token,
   }
   for (const auto &normal_item : closure->normal_items_) {
     for (const auto &production :
-         grammar_.productions_of_[normal_item.head_->name_]) {
+         grammar_->productions_of_[normal_item.head_->name_]) {
       if (!production->body_.empty() && production->body_.front() == token) {
         KernelItem new_item(production, 1);
         new_item.end_with_ = normal_item.end_with_;
@@ -306,7 +323,7 @@ const TokenPtrSet &LALRTableGenerator::getFollowOf(const TokenPtr &token) {
     return follow_of_[token];
   }
 
-  for (const auto &production : grammar_.productions_) {
+  for (const auto &production : grammar_->productions_) {
     if (production->body_.empty())
       continue;
     for (size_t i = 0; i + 1 < production->body_.size(); i++) {
@@ -334,12 +351,12 @@ const TokenPtrSet &LALRTableGenerator::GetFirstOf(const TokenPtr &token) {
     return first_of_[token];
   }
 
-  for (const auto &production : grammar_.productions_of_[token->name_]) {
+  for (const auto &production : grammar_->productions_of_[token->name_]) {
     bool blank_ntil_the_end = true;
     for (size_t i = 0; i < production->body_.size(); i++) {
       const auto &other_first = GetFirstOf(production->body_[i]);
       first_of_[token].insert(other_first.begin(), other_first.end());
-      if (other_first.find(grammar_.blank_) == other_first.end()) {
+      if (other_first.find(grammar_->blank_) == other_first.end()) {
         blank_ntil_the_end = false;
         break;
       }

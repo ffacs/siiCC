@@ -14,29 +14,34 @@ struct Token {
     Terminator = 0,
     Nonterminator = 1,
     BLANK = 2,
-    END = 3
   };
-  uint32_t id_;
-  Token(Type type, const std::string &name) : type_(type), name_(name) {
-    static uint32_t id = 0;
-    id_ = id++; 
+  Token(Type type, const std::string &name, const std::string &debug_name)
+      : type_(type), name_(name), debug_name_(debug_name) {
   }
   Type type_;
   std::string name_;
-  std::string to_string() const { return name_; }
+  std::string debug_name_;
+  uint32_t id_;
+  std::string to_string() const { return debug_name_; }
 };
 
 typedef std::shared_ptr<Token> TokenPtr;
 typedef std::set<TokenPtr> TokenPtrSet;
 typedef std::vector<TokenPtr> TokenPtrVec;
 
+static inline TokenPtr NewTerminator(Token::Type type, const std::string &name, const std::string &debug_name) {
+  return std::make_shared<Token>(type, name, debug_name);  
+}
+
+static inline TokenPtr NewNonTerminator(Token::Type type, const std::string &name) {
+  return std::make_shared<Token>(type, name, name);  
+}
+
 struct Production {
   TokenPtr head_;
   TokenPtrVec body_;
   uint32_t id_;
   Production(TokenPtr head, TokenPtrVec body) : head_(head), body_(body) {
-    static uint32_t id = 0;
-    id_ = id++;
   }
   std::string to_string() const {
     std::stringstream ss;
@@ -94,6 +99,8 @@ struct Grammar {
   }
 };
 
+typedef std::shared_ptr<Grammar> GrammarPtr;
+
 struct KernelItem {
   ProductionPtr production_;
   uint32_t matched_;
@@ -130,11 +137,6 @@ struct Closure {
   KernelItemVec kernel_items_;
   NormalItemVec normal_items_;
   uint32_t id_;
-
-  Closure() {
-    static uint32_t id = 0;
-    id_ = id++;
-  }
 
   bool operator==(const KernelItemVec &other) const;
   bool operator==(const Closure &other) const;

@@ -15,6 +15,11 @@ public:
 
   void PrintLALRTable();
 
+  auto MoveAction() { return std::move(action_); }
+  auto MoveReduce() { return std::move(reduce_); }
+  auto MoveClosures() { return std::move(closures_); }
+  auto MoveGrammar() {return grammar_; }
+
 private:
   TokenPtrVec GetNextTokens(const ClosurePtr &closure);
 
@@ -29,7 +34,7 @@ private:
 
 private:
   std::vector<ClosurePtr> closures_;
-  Grammar grammar_;
+  GrammarPtr grammar_;
   std::map<TokenPtr, TokenPtrSet> follow_of_;
   std::map<TokenPtr, TokenPtrSet> first_of_;
   std::map<ClosurePtr, std::map<TokenPtr, ClosurePtr>> action_;
