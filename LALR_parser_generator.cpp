@@ -1,19 +1,27 @@
 #include "LALR_parser_generator.h"
 #include <iomanip>
 
+namespace siicc {
+namespace LALR {
 class PrintHelper {
 public:
-  PrintHelper(uint8_t default_indent = 2) : indent_(0), default_indent_(default_indent) {}
+  PrintHelper(uint8_t default_indent = 2)
+      : indent_(0), default_indent_(default_indent) {}
 
   void Indent() { indent_ += default_indent_; }
   void Indent(uint32_t count) { indent_ += count; }
   void Deindent(uint32_t count) { indent_ -= count; }
   void Deindent() { indent_ -= default_indent_; }
-  std::ostream& operator << (std::ostream& os) { PrintIndent(os); return os;}
-  
+  std::ostream &operator<<(std::ostream &os) {
+    PrintIndent(os);
+    return os;
+  }
+
 private:
-  void PrintIndent(std::ostream& os) {
-    for (int i = 0; i < indent_; i++) { os << " "; }
+  void PrintIndent(std::ostream &os) {
+    for (int i = 0; i < indent_; i++) {
+      os << " ";
+    }
   }
 
   uint8_t indent_;
@@ -33,22 +41,18 @@ LALRParserGenerator::LALRParserGenerator(ActionType &&action,
     token->id_ = ++idx;
   }
   idx = 0;
-  for (auto& closure : closures) {
+  for (auto &closure : closures) {
     closure->id_ = idx++;
   }
   idx = 0;
-  for (auto& production : grammar_->productions_) {
+  for (auto &production : grammar_->productions_) {
     production->id_ = ++idx;
   }
 }
 
-static inline void OutputTokenDef(PrintHelper &ph,
-                                  std::ostream& os,
+static inline void OutputTokenDef(PrintHelper &ph, std::ostream &os,
                                   const TokenPtrSet &terminators) {
 
-  ph << os << "#include <string>\n";
-  ph << os << "#include <memory>\n";
-  ph << os << "#include <cstdint>\n";
   ph << os << "struct Token {\n";
   ph.Indent();
   ph << os << "enum class TokenType : int32_t {\n";
@@ -59,7 +63,9 @@ static inline void OutputTokenDef(PrintHelper &ph,
   }
   ph.Deindent();
   ph << os << "};\n";
-  ph << os << "Token(TokenType type, const std::string& value) : type_(type), value_(std::make_shared<std::string>(value)) {}";
+  ph << os
+     << "Token(TokenType type, const std::string& value) : type_(type), "
+        "value_(std::make_shared<std::string>(value)) {}";
   ph << os << "TokenType type_;\n";
   ph << os << "std::shared_ptr<std::string> value_;\n";
   ph.Deindent();
@@ -68,25 +74,29 @@ static inline void OutputTokenDef(PrintHelper &ph,
   ph << os << "class Lexer { public: virtual Token Next() = 0; };\n\n";
 }
 
-static inline void OutputNodeDef(PrintHelper &ph,
-                                std::ostream& os,
-                                 const GrammarPtr& grammar) {
-  ph << os << "#include <vector>\n";
+static inline void OutputNodeDef(PrintHelper &ph, std::ostream &os,
+                                 const GrammarPtr &grammar) {
   ph << os << "struct ASTNode {\n";
   ph.Indent();
   ph << os << "enum class Type : int {\n";
   ph.Indent();
-  for (const auto &nonterminator : grammar->nonterminators_) {
-    ph << os << "NODE_" << nonterminator->name_ << " = " << nonterminator->id_ - grammar->terminators_.size() 
+  for (const auto& terminator : grammar->terminators_) {
+    ph << os << "LEAF_" << terminator->name_ << " = " << terminator->id_
        << ",\n";
   }
-  ph << os << "LEAF"
-     << " = " << grammar->nonterminators_.size() + 1<< ",\n";
+  for (const auto &nonterminator : grammar->nonterminators_) {
+    ph << os << "NODE_" << nonterminator->name_ << " = " << nonterminator->id_
+       << ",\n";
+  }
   ph.Deindent();
   ph << os << "};\n";
   ph << os << "Type type_;\n";
   ph << os << "std::shared_ptr<std::string> value_;\n";
   ph << os << "std::vector<std::shared_ptr<ASTNode>> children_;\n";
+  ph << os
+     << "static bool IsLeaf(Type type) { return static_cast<int>(type) <= "
+     << grammar->terminators_.size() << "; }\n";
+  ph << os << "static std::string TypeToStr(Type type);\n";
   ph.Deindent();
   ph << os << "};\n";
   ph << os << "typedef std::shared_ptr<ASTNode> ASTNodePtr;\n";
@@ -95,16 +105,23 @@ static inline void OutputNodeDef(PrintHelper &ph,
 
 void LALRParserGenerator::OutputHeader(std::ostream &os) {
   os << "#pragma once\n";
+  os << "#include <string>\n";
+  os << "#include <memory>\n";
+  os << "#include <cstdint>\n";
+  os << "#include <vector>\n";
+  os << "namespace siicc {\n";
   PrintHelper ph;
   OutputTokenDef(ph, os, grammar_->terminators_);
   OutputNodeDef(ph, os, grammar_);
+  os << "} // namespace sii\n";
 }
 
-static void OutputAcceptDefine(PrintHelper& ph, std::ostream& os, uint32_t accpeted) {
+static void OutputAcceptDefine(PrintHelper &ph, std::ostream &os,
+                               uint32_t accpeted) {
   ph << os << "static constexpr uint32_t ACCPET_TOKEN = " << accpeted << ";\n";
 }
 
-static std::string GetPrintStr(const std::string& str) {
+static std::string GetPrintStr(const std::string &str) {
   std::string result;
   for (auto ch : str) {
     if (ch == '\'') {
@@ -120,44 +137,76 @@ static std::string GetPrintStr(const std::string& str) {
   return result;
 }
 
-static void OutputDebugInfo(PrintHelper& ph, std::ostream& os, const GrammarPtr& grammar) {
-  ph << os << "const char* DEBUG_INFO_TABLE[" << grammar->nonterminators_.size() + grammar->terminators_.size() << "] = {\n";
+static void OutputDebugInfo(PrintHelper &ph, std::ostream &os,
+                            const GrammarPtr &grammar) {
+  ph << os << "const char* DEBUG_INFO_TABLE["
+     << grammar->nonterminators_.size() + grammar->terminators_.size()
+     << "] = {\n";
   ph.Indent();
-  for (const auto& terminator : grammar->terminators_) {
+  for (const auto &terminator : grammar->terminators_) {
     ph << os << "\"" << GetPrintStr(terminator->debug_name_) << "\",\n";
   }
-  for (const auto& nonterminator : grammar->nonterminators_) {
+  for (const auto &nonterminator : grammar->nonterminators_) {
     ph << os << "\"" << GetPrintStr(nonterminator->debug_name_) << "\",\n";
   }
   ph.Deindent();
   ph << os << "};\n";
+
+  ph << os << "std::string ASTNode::TypeToStr(Type type) {\n";
+  ph.Indent();
+  ph << os << "switch (type) {\n";
+  ph.Indent();
+  uint32_t idx = 1;
+  for (const auto& terminator : grammar->terminators_) {
+    ph << os << "case ASTNode::Type::LEAF_" << terminator->name_ << ":\n";
+    ph.Indent();
+    ph << os << "return \"" << terminator->name_ << "\";\n";
+    ph.Deindent();
+  }
+  for (const auto &nonterminator : grammar->nonterminators_) {
+    ph << os << "case ASTNode::Type::NODE_" << nonterminator->name_  << ":\n";
+    ph.Indent();
+    ph << os << "return \"" << nonterminator->name_ << "\";\n";
+    ph.Deindent();
+  }
+  ph << os << "default: throw std::invalid_argument(\"Invalid argument.\");\n";
+  ph.Deindent();
+  ph << os << "}\n";
+  ph.Deindent();
+  ph << os << "}\n";
 }
 
-static void OutputTables(PrintHelper &ph, std::ostream& os, const std::vector<uint32_t> reduce_result,
-                  const std::vector<uint32_t> &reduce_length,
-                  const std::vector<std::vector<int32_t>> &action_table,
-                  const GrammarPtr& grammar) {
+static void OutputTables(PrintHelper &ph, std::ostream &os,
+                         const std::vector<uint32_t> reduce_result,
+                         const std::vector<uint32_t> &reduce_length,
+                         const std::vector<std::vector<int32_t>> &action_table,
+                         const GrammarPtr &grammar) {
   ph << os << "uint32_t reduce_result[" << reduce_result.size() << "] = {\n";
   ph.Indent();
-  for (size_t i = 0; i < reduce_result.size(); i++) { ph << os << reduce_result[i] << ", "[i + 1 == reduce_result.size()]; }
+  for (size_t i = 0; i < reduce_result.size(); i++) {
+    ph << os << reduce_result[i] << ", "[i + 1 == reduce_result.size()];
+  }
   ph.Deindent();
   ph << os << "\n};\n";
   ph << os << "uint32_t reduce_length[" << reduce_length.size() << "] = {\n";
   ph.Indent();
-  for (size_t i = 0; i < reduce_length.size(); i++) { ph << os << reduce_length[i] << ", "[i + 1 == reduce_length.size()]; }
+  for (size_t i = 0; i < reduce_length.size(); i++) {
+    ph << os << reduce_length[i] << ", "[i + 1 == reduce_length.size()];
+  }
   ph.Deindent();
   ph << os << "\n};\n";
-  ph << os << "int32_t action_table[" << action_table.size() << "][" << action_table[0].size()  << "] = {\n";
+  ph << os << "int32_t action_table[" << action_table.size() << "]["
+     << action_table[0].size() << "] = {\n";
   ph.Indent();
   for (size_t i = 0; i < action_table.size(); i++) {
     for (size_t j = 0; j < action_table[i].size(); j++) {
-       ph << os << std::setw(3) << action_table[i][j] << ","; 
+      ph << os << std::setw(3) << action_table[i][j] << ",";
     }
     ph << os << "\n";
   }
   ph.Deindent();
   ph << os << "};\n";
-  
+
   ph << os << "static bool ShouldShift(uint32_t next_id) {\n";
   ph.Indent();
   ph << os << "return next_id < " << grammar->terminators_.size() + 1 << ";\n";
@@ -165,44 +214,43 @@ static void OutputTables(PrintHelper &ph, std::ostream& os, const std::vector<ui
   ph << os << "};\n";
 }
 
-static void OutputGenerateNode(PrintHelper& ph, std::ostream& os, const GrammarPtr& grammar) {
+static void OutputGenerateNode(PrintHelper &ph, std::ostream &os,
+                               const GrammarPtr &grammar) {
   ph << os
      << R"""(ASTNodePtr CreateASTNode(uint32_t token_id, const std::string& value = "") {)"""
      << "\n";
   ph.Indent();
-  ph << os << "auto result = std::make_shared<ASTNode>();\n"; 
-  ph << os << "result->value_ = std::make_shared<std::string>(value);\n"; 
+  ph << os << "auto result = std::make_shared<ASTNode>();\n";
+  ph << os << "result->value_ = std::make_shared<std::string>(value);\n";
   ph << os << "switch (token_id) {\n";
   ph.Indent();
-  for (size_t i = 1; i <= grammar->terminators_.size(); i++) {
-    ph << os << "case " << i << ":\n";
+  uint32_t idx = 1;
+  for (const auto& terminator : grammar->terminators_) {
+    ph << os << "case " << (idx++) << ":\n";
     ph.Indent();
-    ph << os << "result->type_ = ASTNode::Type::LEAF;\n";
+    ph << os << "result->type_ = ASTNode::Type::LEAF_" << terminator->name_ << ";\n";
     ph << os << "break;\n";
     ph.Deindent();
   }
-  uint32_t idx = 1;
-  for (const auto& nonterminator : grammar->nonterminators_) {
-    ph << os << "case " << (idx++) + grammar->terminators_.size() << ":\n";    
+  for (const auto &nonterminator : grammar->nonterminators_) {
+    ph << os << "case " << (idx++) << ":\n";
     ph.Indent();
-    ph << os << "result->type_ = ASTNode::Type::NODE_" << nonterminator->name_ << ";\n";
+    ph << os << "result->type_ = ASTNode::Type::NODE_" << nonterminator->name_
+       << ";\n";
     ph << os << "break;\n";
-    ph.Deindent(); 
+    ph.Deindent();
   }
   ph.Deindent();
-  ph << os << "}";
+  ph << os << "}\n";
   ph << os << "return result;\n";
   ph.Deindent();
-  ph << os << "}";
-  
+  ph << os << "}\n";
+
 }
 
-static void OutputAlgo(PrintHelper& ph, std::ostream& os) {
+static void OutputAlgo(PrintHelper &ph, std::ostream &os) {
 
   std::string algo = R"""(
-#include <stack>
-#include <stdexcept>
-#include <iostream>
 ASTNodePtr Parse(std::shared_ptr<Lexer> lexer) {
 	std::stack<int32_t> state_stack, next_token_id;
 	std::vector<std::shared_ptr<ASTNode>> ast_stack;
@@ -244,28 +292,42 @@ ASTNodePtr Parse(std::shared_ptr<Lexer> lexer) {
 			ast_stack.push_back(new_AST_Node);
 			current_state = state_stack.top();
 		}
+#ifdef DEBUG_MODE
+    for (int i = 0; i < ast_stack.size(); i++) {
+      auto& item = ast_stack[i];
+      if (ASTNode::IsLeaf(item->type_)) {
+        std::cerr << *ast_stack[i]->value_ << " ";
+      } else {
+        std::cerr << DEBUG_INFO_TABLE[static_cast<int>(ast_stack[i]->type_) - 1] << " ";
+      }
+    } std::cerr << "\n";
+#endif
 	}
 }
 )""";
-  
-  ph << os << algo;
 
+  ph << os << algo;
 }
 
 void LALRParserGenerator::OutputCpp(const std::string &header_name,
                                     std::ostream &os) {
   PrintHelper ph;
   ph << os << "#include \"" << header_name << "\"\n";
+  ph << os << "#include <iostream>\n";
+  ph << os << "#include <stack>\n";
+  ph << os << "#include <stdexcept>\n";
+  ph << os << "namespace siicc {\n";
+
   std::vector<uint32_t> reduce_result(grammar_->productions_.size() + 1);
   std::vector<uint32_t> reduce_length(grammar_->productions_.size() + 1);
   std::vector<std::vector<int32_t>> action_table;
-  for (const auto& production : grammar_->productions_) {
+  for (const auto &production : grammar_->productions_) {
     reduce_result[production->id_] = production->head_->id_;
-    reduce_length[production->id_]= production->body_.size();
+    reduce_length[production->id_] = production->body_.size();
   }
   for (const auto &closure : closures_) {
-    action_table.emplace_back(grammar_->terminators_.size() +
-                              grammar_->nonterminators_.size(), 0);
+    action_table.emplace_back(
+        grammar_->terminators_.size() + grammar_->nonterminators_.size(), 0);
     const auto &action = action_[closure];
     const auto &reduce = reduce_[closure];
     for (const auto &terminator : grammar_->terminators_) {
@@ -273,20 +335,26 @@ void LALRParserGenerator::OutputCpp(const std::string &header_name,
       auto reduce_iter = reduce.find(terminator);
       if (action_iter != action.end()) {
         action_table[closure->id_][terminator->id_] = action_iter->second->id_;
-      } else if (reduce_iter != reduce.end()){
-        action_table[closure->id_][terminator->id_] = -1 * reduce_iter->second->id_;
+      } else if (reduce_iter != reduce.end()) {
+        action_table[closure->id_][terminator->id_] =
+            -1 * reduce_iter->second->id_;
       }
     }
-    for (const auto& nonterminator : grammar_->nonterminators_) {
+    for (const auto &nonterminator : grammar_->nonterminators_) {
       auto action_iter = action.find(nonterminator);
       if (action_iter != action.end()) {
-        action_table[closure->id_][nonterminator->id_] = action_iter->second->id_;
+        action_table[closure->id_][nonterminator->id_] =
+            action_iter->second->id_;
       }
     }
   }
   OutputTables(ph, os, reduce_result, reduce_length, action_table, grammar_);
   OutputDebugInfo(ph, os, grammar_);
   OutputAcceptDefine(ph, os, grammar_->start_->id_);
-  OutputGenerateNode(ph, os ,grammar_);
+  OutputGenerateNode(ph, os, grammar_);
   OutputAlgo(ph, os);
+
+  ph << os << "} // namespace siicc \n";
 }
+} // namespace LALR
+} // namespace siicc

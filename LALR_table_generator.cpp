@@ -1,5 +1,8 @@
 #include "LALR_table_generator.h"
 
+namespace siicc {
+namespace LALR {
+
 std::string KernelItem::to_string() const {
   std::stringstream ss;
   ss << production_->head_->to_string() << " -> ";
@@ -7,7 +10,7 @@ std::string KernelItem::to_string() const {
     if (i == matched_) {
       ss << "*";
     }
-    ss << production_->body_[i]->to_string();
+    ss << production_->body_[i]->to_string() << " ";
   }
   if (matched_ == production_->body_.size())
     ss << "*";
@@ -26,7 +29,7 @@ std::string NormalItem::to_string(
   for (const auto &production : productions) {
     ss << head_->to_string() << " -> *";
     for (const auto &token : production->body_) {
-      ss << token->to_string();
+      ss << token->to_string() << " ";
     }
     ss << "    : ";
     for (const auto &token : end_with_) {
@@ -74,30 +77,40 @@ std::optional<size_t> Closure::GetNormalItem(TokenPtr token) {
 }
 
 LALRTableGenerator::LALRTableGenerator(const Grammar &grammar) {
+  if (grammar.blank_ == nullptr) {
+    throw std::invalid_argument("blank not specified.");
+  }
+  if (grammar.end_ == nullptr) {
+    throw std::invalid_argument("end not specified.");
+  }
+  if (grammar.start_ == nullptr) {
+    throw std::invalid_argument("start not specified.");
+  }
+  
   GrammarPtr new_grammer = std::make_shared<Grammar>();
   *new_grammer = grammar;
-  auto new_start =
-      NewNonTerminator(Token::Type::Nonterminator, "GRAMMAR_START");
+  auto new_start = NewNonTerminator("START");
+
 
   new_grammer->start_ = new_start;
   new_grammer->nonterminators_.insert(new_start);
   auto new_production =
       std::make_shared<Production>(new_start, TokenPtrVec{grammar.start_});
   new_grammer->productions_.insert(new_grammer->productions_.begin(),
-                                  new_production);
+                                   new_production);
   new_grammer->BuildProductionsOf();
   grammar_ = new_grammer;
-  
+
   uint32_t idx = 0;
-  for (auto& production : grammar_->productions_) {
+  for (auto &production : grammar_->productions_) {
     production->id_ = ++idx;
   }
   idx = 0;
-  for (auto& terminator : grammar_->terminators_) {
+  for (auto &terminator : grammar_->terminators_) {
     terminator->id_ = ++idx;
   }
   idx = 0;
-  for (auto& nonterminator : grammar_->nonterminators_) {
+  for (auto &nonterminator : grammar_->nonterminators_) {
     nonterminator->id_ = ++idx;
   }
 }
@@ -122,11 +135,13 @@ void LALRTableGenerator::GenerateLALRTable() {
       auto next_closure_pair = GetNextClosureFor(token, closure);
       const auto &next_closure = next_closure_pair.second;
       action_[closure][token] = next_closure;
-//       std::cout << "------------------------\n";
-//       std::cout << closure->to_string(grammar_->productions_of_) << " >> "
-//                 << token->to_string() << " >> \n"
-//                 << next_closure->to_string(grammar_->productions_of_);
-//       std::cout << "------------------------\n";
+#ifdef DEBUG_MODE
+      std::cerr << "------------------------\n";
+      std::cerr << closure->to_string(grammar_->productions_of_) << " >> "
+                << token->to_string() << " >> \n"
+                << next_closure->to_string(grammar_->productions_of_);
+      std::cerr << "------------------------\n";
+#endif
       if (!next_closure_pair.first) {
         queue.push(next_closure);
       }
@@ -141,10 +156,14 @@ void LALRTableGenerator::GenerateLALRTable() {
           if (token->type_ == Token::Type::BLANK)
             continue;
           if (reduce_[closure].find(token) != reduce_[closure].end()) {
-            throw std::invalid_argument("Reduce-Reduce confliction found.");
+            throw std::invalid_argument(
+                std::string("Reduce-Reduce confliction found: ") +
+                token->to_string());
           }
           if (action_[closure].find(token) != action_[closure].end()) {
-            throw std::invalid_argument("Shift-Reduce confliction found.");
+            throw std::invalid_argument(
+                std::string("Shift-Reduce confliction found: ") +
+                token->to_string());
           }
           reduce_[closure][token] = kernel_item.production_;
         }
@@ -225,8 +244,14 @@ LALRTableGenerator::GetClosure(KernelItemVec &&kernel_items) {
         queue.push(token);
       }
       auto &end_with = new_closure->normal_items_[idx].end_with_;
-      end_with.insert(kernel_item.end_with_.begin(),
-                      kernel_item.end_with_.end());
+      if (kernel_item.matched_ + 1 < kernel_item.production_->body_.size()) {
+        const auto &first = GetFirstOf(
+            kernel_item.production_->body_[kernel_item.matched_ + 1]);
+        end_with.insert(first.begin(), first.end());
+      } else {
+        end_with.insert(kernel_item.end_with_.begin(),
+                        kernel_item.end_with_.end());
+      }
     }
   }
   while (!queue.empty()) {
@@ -290,7 +315,7 @@ TokenPtrVec LALRTableGenerator::GetNextTokens(const ClosurePtr &closure) {
 
 std::pair<bool, ClosurePtr>
 LALRTableGenerator::GetNextClosureFor(const TokenPtr &token,
-                                       const ClosurePtr &closure) {
+                                      const ClosurePtr &closure) {
   KernelItemVec new_closure_kernel;
   for (const auto &kernel_item : closure->kernel_items_) {
     if (kernel_item.matched_ != kernel_item.production_->body_.size() &&
@@ -372,3 +397,5 @@ const TokenPtrSet &LALRTableGenerator::GetFirstOf(const TokenPtr &token) {
 
   return first_of_[token];
 }
+} // namespace LALR
+} // namespace siicc

@@ -1,14 +1,16 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
-#include <memory>
-#include <set>
-#include <vector>
-#include <sstream>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
 
+namespace siicc {
+namespace LALR {
 struct Token {
   enum class Type : uint32_t {
     Terminator = 0,
@@ -16,8 +18,7 @@ struct Token {
     BLANK = 2,
   };
   Token(Type type, const std::string &name, const std::string &debug_name)
-      : type_(type), name_(name), debug_name_(debug_name) {
-  }
+      : type_(type), name_(name), debug_name_(debug_name) {}
   Type type_;
   std::string name_;
   std::string debug_name_;
@@ -29,25 +30,33 @@ typedef std::shared_ptr<Token> TokenPtr;
 typedef std::set<TokenPtr> TokenPtrSet;
 typedef std::vector<TokenPtr> TokenPtrVec;
 
-static inline TokenPtr NewTerminator(Token::Type type, const std::string &name, const std::string &debug_name) {
-  return std::make_shared<Token>(type, name, debug_name);  
+static inline TokenPtr NewTerminator(const std::string &name,
+                                     const std::string &debug_name) {
+  return std::make_shared<Token>(Token::Type::Terminator, name, debug_name);
 }
 
-static inline TokenPtr NewNonTerminator(Token::Type type, const std::string &name) {
-  return std::make_shared<Token>(type, name, name);  
+static inline TokenPtr NewBlank() {
+  return std::make_shared<Token>(Token::Type::BLANK, "Blank", "Blank");
+}
+
+static inline TokenPtr NewEnd() {
+  return std::make_shared<Token>(Token::Type::BLANK, "End", "End");
+}
+
+static inline TokenPtr NewNonTerminator(const std::string &name) {
+  return std::make_shared<Token>(Token::Type::Nonterminator, name, name);
 }
 
 struct Production {
   TokenPtr head_;
   TokenPtrVec body_;
   uint32_t id_;
-  Production(TokenPtr head, TokenPtrVec body) : head_(head), body_(body) {
-  }
+  Production(TokenPtr head, TokenPtrVec body) : head_(head), body_(body) {}
   std::string to_string() const {
     std::stringstream ss;
     ss << head_->to_string() << " -> ";
     for (const auto &token : body_) {
-      ss << token->to_string();
+      ss << token->to_string() << " ";
     }
     return ss.str();
   }
@@ -68,20 +77,21 @@ struct Grammar {
     for (const auto &production : productions_) {
       if (production->body_.empty()) {
         std::stringstream ss;
-        ss << "Production with head:" << production->head_ << " has empty body"; 
+        ss << "Production with head:" << production->head_ << " has empty body";
         throw std::invalid_argument(ss.str());
       }
-      for (const auto& token : production->body_) {
-        if (token->type_ == Token::Type::BLANK && production->body_.size() != 1) {
+      for (const auto &token : production->body_) {
+        if (token->type_ == Token::Type::BLANK &&
+            production->body_.size() != 1) {
           std::vector<TokenPtr> new_production_body;
-          for (const auto& token : production->body_) {
+          for (const auto &token : production->body_) {
             if (token->type_ == Token::Type::BLANK) {
               continue;
             }
             new_production_body.push_back(token);
           }
           production->body_ = new_production_body;
-        }        
+        }
       }
       const auto &body = production->body_;
       if (production->head_->type_ != Token::Type::Nonterminator) {
@@ -146,3 +156,5 @@ struct Closure {
   std::optional<size_t> GetNormalItem(TokenPtr token);
 };
 typedef std::shared_ptr<Closure> ClosurePtr;
+} // namespace LALR
+} // namespace siicc
